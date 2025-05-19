@@ -1,0 +1,202 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+This document: Figure 2f: analysis of Pol III ChIP-seq data (read counts); occupancy of Pol III on tRNA genes. Figure 2e: Percentage G2-population over multiple passages. Figure 2g: MTT assay tRNA gene and intergenic deletion clones.
+
+### Figure 2f: Pol III occupancy
+
+The upstream analysis of ChIP-seq data is performed on Dardel (PDC). /cfs/klemming/projects/supr/naiss2024-23-161/our_data/ChIP/HepG2_Pol3_250401/fastq/
+
+```{r}
+library(tibble)
+library(stringr)
+library(ggpubr)
+library(gtools)
+library("readxl")
+library(dplyr)
+```
+
+```{r}
+pooled_counts <- read.delim("tRNA_count/HepG2_Pol3ChIP_t11_S6_L001_R1_001_allo_tRNAcount.txt", header = F) %>%
+  full_join(read.delim("tRNA_count/HepG2_Pol3ChIP_t29_S7_L001_R1_001_allo_tRNAcount.txt", header = F) %>% select(V4, V13), by = "V4") %>%
+  full_join(read.delim("tRNA_count/HepG2_Pol3ChIP_t80_S8_L001_R1_001_allo_tRNAcount.txt", header = F) %>% select(V4, V13), by = "V4") %>%
+  full_join(read.delim("tRNA_count/HepG2_Pol3ChIP_wt_1_S3_L001_R1_001_allo_tRNAcount.txt", header = F) %>% select(V4, V13), by = "V4") %>%
+  full_join(read.delim("tRNA_count/HepG2_Pol3ChIP_wt_2_S4_L001_R1_001_allo_tRNAcount.txt", header = F) %>% select(V4, V13), by = "V4") %>%
+  full_join(read.delim("tRNA_count/HepG2_Pol3ChIP_wt_3_S5_L001_R1_001_allo_tRNAcount.txt", header = F) %>% select(V4, V13), by = "V4") 
+  
+
+
+```
+
+process tRNA gene read count
+
+```{r}
+tRNAcount_HepG2_tRNA_deletion <- pooled_counts %>%
+  dplyr::select(c(1:4, 13:18))
+
+colnames(tRNAcount_HepG2_tRNA_deletion) <- c("V1","V2","V3","tRNA_name","HepG2_t11", "HepG2_t29", "HepG2_t80", "HepG2_ctrl1", "HepG2_ctrl2", "HepG2_ctrl3")
+```
+
+Normalise and scale read counts to overall read counts
+
+```{r}
+scaling_factor_10M <- 100000 / colSums(tRNAcount_HepG2_tRNA_deletion[, 5:10])
+
+tRNAcount_HepG2_tRNA_deletion_10M <- tRNAcount_HepG2_tRNA_deletion
+for (col_name in colnames(tRNAcount_HepG2_tRNA_deletion_10M)[5:ncol(tRNAcount_HepG2_tRNA_deletion_10M)]) {
+  # Extract the normalization factor for the column name from data frame A
+  scal_fac_10M <- scaling_factor_10M[match(col_name, names(scaling_factor_10M))]
+  # Multiply the column by the normalization factor and assign it to a new column in data frame B
+  tRNAcount_HepG2_tRNA_deletion_10M[[paste0(col_name, "_adjusted")]] <- tRNAcount_HepG2_tRNA_deletion_10M[[col_name]] * scal_fac_10M 
+}
+
+
+tRNAcount_HepG2_tRNA_deletion_10M <- tRNAcount_HepG2_tRNA_deletion_10M %>%
+  dplyr::filter(str_detect(tRNA_name, "tRNA-")) %>%
+  tidyr::separate(tRNA_name, c("tRNA", "isotype", "isoacceptor", "number1", "number12"), remove = F ) %>%
+  dplyr::select(!c(1:3, 5, 8:15)) %>%
+  dplyr::filter(isoacceptor!="NNN")
+write.table(tRNAcount_HepG2_tRNA_deletion_10M, "tRNA_count/tRNAcount_HepG2_tRNA_deletion_10M_normalized.txt", quote = F, sep="\t", row.names = F, col.names = T)
+
+```
+
+```{r}
+#plot the correlation between two replicates
+ggplot(tRNAcount_HepG2_tRNA_deletion_10M, aes(`HepG2_ctrl1_adjusted`, `HepG2_ctrl2_adjusted`)) +
+  geom_point(alpha=0.3)
+ggsave("compare_replicates/HepG2_compare_wt1-2.pdf")
+
+ggplot(tRNAcount_HepG2_tRNA_deletion_10M, aes(`HepG2_ctrl1_adjusted`, `HepG2_ctrl3_adjusted`)) +
+  geom_point(alpha=0.3)
+ggsave("compare_replicates/HepG2_compare_wt1-3.pdf")
+
+ggplot(tRNAcount_HepG2_tRNA_deletion_10M, aes(`HepG2_ctrl2_adjusted`, `HepG2_ctrl3_adjusted`)) +
+  geom_point(alpha=0.3)
+ggsave("compare_replicates/HepG2_compare_wt2-3.pdf")
+
+
+
+ggplot(tRNAcount_HepG2_tRNA_deletion_10M, aes(`HepG2_t11_adjusted`, `HepG2_t29_adjusted`)) +
+  geom_point(alpha=0.3)
+ggsave("compare_replicates/HepG2_compare_t11-29.pdf")
+
+ggplot(tRNAcount_HepG2_tRNA_deletion_10M, aes(`HepG2_t11_adjusted`, `HepG2_t80_adjusted`)) +
+  geom_point(alpha=0.3)
+ggsave("compare_replicates/HepG2_compare_t11-80.pdf")
+
+ggplot(tRNAcount_HepG2_tRNA_deletion_10M, aes(`HepG2_t29_adjusted`, `HepG2_t80_adjusted`)) +
+  geom_point(alpha=0.3)
+ggsave("compare_replicates/HepG2_compare_t29-80.pdf")
+```
+
+plot the gene usage between modified and unmodified cells. plots the average for both modified and unmodified HepG2
+
+```{r}
+tRNAcount_HepG2_tRNA_deletion_10M_plot <- tRNAcount_HepG2_tRNA_deletion_10M %>%
+  dplyr::mutate(ctrl_mean=(`HepG2_ctrl1_adjusted` + 
+                             `HepG2_ctrl2_adjusted` + 
+                             `HepG2_ctrl3_adjusted`)/3) %>%
+  dplyr::mutate(deletion_mean=(`HepG2_t11_adjusted` +
+                                 `HepG2_t29_adjusted` + 
+                                 `HepG2_t80_adjusted`)/3)  %>%
+  dplyr::select(!c(4:9))
+```
+
+```{r}
+ggplot(tRNAcount_HepG2_tRNA_deletion_10M_plot, aes(x=ctrl_mean, y=deletion_mean)) +
+  geom_point(color="black", size=2, alpha=0.5) + 
+  geom_point(data = tRNAcount_HepG2_tRNA_deletion_10M_plot %>% dplyr::filter(isotype=="Cys"), 
+           color="#FFC100", size=3.0) +
+  geom_point(data = tRNAcount_HepG2_tRNA_deletion_10M_plot %>% dplyr::filter(tRNA_name=="tRNA-Cys-GCA-2-3"), 
+           color="#FF6500", size=3.0) +
+  geom_point(data = tRNAcount_HepG2_tRNA_deletion_10M_plot %>% dplyr::filter(tRNA_name=="tRNA-Cys-GCA-2-4"), 
+           color="#C40C0C", size=3.0) +
+  geom_smooth(method="lm", size=0.3) + 
+  #ggtitle("Pol III occupancy of each individual tRNA gene in HepG2") + 
+  theme_bw(base_size = 20) +
+  ylab("HepG2 tRNA Deletion Clones") +
+  xlab("HepG2 Unmodified Control") +
+  ylim(0, 950)  + 
+  xlim(0, 950)  +
+  theme(axis.title.x = element_text(size = 16),
+        axis.text.x=element_text(size=16),
+        axis.title.y = element_text(size = 16),
+        axis.text.y=element_text(size=16),
+#        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+ggsave("compare_replicates/HepG2_eachgene_q15_equal_axes_landscape.pdf", height = 7, width = 10)
+```
+
+### Figure 2e: Proportion G2-population
+
+```{r}
+HepG2_cell_cycle <- read.csv("25-05-07_test_HepG2_cellcycle_FlowJo.txt", sep = "\t")
+  
+colnames(HepG2_cell_cycle) <- c("Clone", "Passage", "Percent_G2")
+
+
+```
+
+```{r}
+ggplot(HepG2_cell_cycle, aes(x = Passage, y = Percent_G2, group = Clone, colour = Clone)) +
+  geom_point(size = 2) +
+  geom_line() +
+  scale_color_manual(values = c("#f46d43", "#CC6677", "#DDCC77")) +
+  labs(x = "Passage", y = "Percent G2") +
+  scale_x_continuous(breaks = c(114, 119, 120, 125, 126)) +
+  theme_bw()+
+  theme(axis.title.x = element_text(size = 16),
+        axis.text.x=element_text(size=16, color = "black"),
+        axis.title.y = element_text(size = 16),
+        axis.text.y=element_text(size=16, color = "black"),
+        legend.title = element_text(size = 16),
+        legend.text = element_text(size = 16),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+```
+
+```{r}
+ggsave("HepG2_cell_cycle_bw_ng.pdf", height = 4.5, width = 7)
+```
+
+### Figure 2g: MTT-assay results
+
+```{r}
+HepG2_MTT_data <- read.csv("HepG2_MTT_mean_sd.csv", sep = ",")
+
+colnames(HepG2_MTT_data) <- c("Clone", "day", "mean", "SD")
+```
+
+```{r}
+HepG2_MTT_data$Clone <- factor(HepG2_MTT_data$Clone, c("i4", "i14", "t25", "t30", "t46"))
+
+ggplot(HepG2_MTT_data, aes(x=day, y=mean, group = Clone, colour = Clone)) +
+  geom_point(size = 2) +
+  geom_line(linewidth = 0.5) +
+  geom_errorbar(aes(ymin = mean-SD, ymax = mean+SD), width = 0.1) +
+  scale_color_manual(values = c("#332288", "#88CCEE", "#f46d43", "#CC6677", "#DDCC77")) +
+  labs(x = "Days", y = "Mean OD (570nm)") +
+  scale_x_continuous(breaks = c(1, 3, 5)) +
+  theme_bw() +
+  theme(axis.title.x = element_text(size = 16),
+        axis.text.x=element_text(size=16, color = "black"),
+        axis.title.y = element_text(size = 16),
+        axis.text.y=element_text(size=16, color = "black"),
+        legend.title = element_text(size = 16),
+        legend.text = element_text(size = 16),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+```
+
+```{r}
+ggsave("HepG2_MTT_bw_ng.pdf", height = 6, width = 5.2)
+```
+
+```{r}
+sessionInfo()
+```

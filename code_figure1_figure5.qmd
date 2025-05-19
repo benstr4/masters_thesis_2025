@@ -1,0 +1,810 @@
+---
+title: "all_tRNA_figures"
+format: html
+editor: visual
+---
+
+## Deletion of tRNAs in cancer: using actively expressed tRNAs
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(ggVennDiagram)
+library(ggpubr)
+```
+
+### Loading the data, intersect deletions with tRNA genes
+
+```{r}
+#load clinical data as well as deletion calls
+clinical_data <- read.csv("data/clinical_PANCAN_patient_with_followup.tsv", sep = "\t")
+absolute_data <- read.csv("data/TCGA_mastercalls.abs_segtabs.fixed.txt", sep = "\t")
+
+absolute_data$Chromosome <- as.character(absolute_data$Chromosome) 
+
+absolute_data$Chromosome <- paste("chr", absolute_data$Chromosome, sep = "")
+```
+
+```{r}
+#select all deletions marked as homozygous in the data
+deletions_homozygous <- absolute_data %>%
+  filter(Homozygous_deletion == TRUE) %>%
+  select(Chromosome, Start, End, Sample)
+
+#give every deletion a unique deletion ID consisting of sample ID + the number of the deletion (no specific ordering)
+deletions_homozygous <- deletions_homozygous %>%
+  group_by(Sample) %>%
+  mutate(Sample = paste0(Sample, "_", row_number())) %>%
+  ungroup()
+
+colnames(deletions_homozygous) <- c("Chromosome", "Start", "End", "deletion_id")
+
+#saving the homozygous deletions as a bed file to 
+write.table(deletions_homozygous, file="data/hg19-tRNAs/homozygous_deletions.bed", sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+#get the patient ID for each deletion
+deletions_homozygous$patient_id <- substr(deletions_homozygous$deletion_id, 1, 12)
+```
+
+### Figure 1a: Prevalence of tRNA genes in human cancer samples
+
+```{r}
+#import all annotated tRNAs
+all_tRNAs_hg19 <- read.csv("data/hg19-tRNAs/hg19-tRNAs.bed", sep = "\t", header = FALSE)
+
+colnames(all_tRNAs_hg19) <- c("chrom", "start", "end", "name", "score", "strand", "thickStart", "thickEnd", "itemRgb", "blockCount", "blockSizes", "blockStarts")
+
+#import the tRNAs annotated as transcribed across tissues
+tRNA_hc_annotation <- read.csv("data/tRNA_hc_tissues.csv", sep = "\t")
+
+tRNA_hc_annotation$Name <- gsub("Homo_sapiens_", "", tRNA_hc_annotation$Name)
+#removes the unnecessary parts of the name
+
+colnames(tRNA_hc_annotation) <- c("name", "T1", "T2", "T3", "T4")
+
+#sorting the tRNAs! since some are marked as expressed in no tissues
+tRNA_hc_annotation_sorted <- tRNA_hc_annotation %>%
+  mutate(collapsed = T1+T2+T3+T4) %>%
+  filter(collapsed >= 1) %>%
+  select("name")
+
+#select coordinates of expressed tRNAs
+tRNA_hc_coord_hg19 <- all_tRNAs_hg19 %>%
+  inner_join(tRNA_hc_annotation_sorted, by = "name")
+
+write.table(tRNA_hc_coord_hg19, file = "data/tRNA_hc_hg19.bed", sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+```{bash}
+bedtools intersect -F 1 -wo -a data/hg19-tRNAs/homozygous_deletions.bed -b data/tRNA_hc_hg19.bed > deletions_hc_tRNA.bed
+```
+
+```{r}
+#read in all deletions that contain tRNA genes
+deleted_hc_tRNAs <- read.csv("deletions_hc_tRNA.bed", sep = "\t", header = FALSE)
+#get the patient ID
+deleted_hc_tRNAs$patient_id <- substr(deleted_hc_tRNAs$V4, 1, 12)
+
+#seperate patients by whether they have homozygous deletions, homoz. del. of tRNAs
+patients_by_cancer_no_homozygous <- clinical_data %>%
+  filter(!(bcr_patient_barcode %in% deletions_homozygous$patient_id)) %>%
+  count(acronym, name = "no_homozygous")
+
+patients_by_cancer_tRNA_hc <- clinical_data %>%
+  filter(bcr_patient_barcode %in% deleted_hc_tRNAs$patient_id) %>%
+  count(acronym, name = "homozygous_tRNA")
+
+patients_by_cancer_tRNA_hc_wo<- clinical_data %>%
+  filter(!(bcr_patient_barcode %in% deleted_hc_tRNAs$patient_id)) %>%
+  count(acronym, name = "homozygous_no_tRNA")
+
+patients_by_cancer_tRNA_hc <- patients_by_cancer_tRNA_hc %>%
+  full_join(patients_by_cancer_tRNA_hc_wo, by = "acronym") %>%
+  full_join(patients_by_cancer_no_homozygous, by = "acronym") %>%
+  replace_na(list(acronym = NA, homozygous_tRNA = 0, homozygous_no_tRNA = 0))
+
+colnames(patients_by_cancer_tRNA_hc) <- c("acronym", "Homozygous tRNA Deletion", "No Homozygous tRNA Deletion", "No Homozygous Deletion")
+```
+
+```{r}
+#pivot df to plot
+patients_by_cancer_tRNA_hc <- patients_by_cancer_tRNA_hc %>%
+  pivot_longer(cols = contains("Homozygous"),
+               names_to = "group",
+               values_to = "n") %>%
+  group_by(acronym) %>%
+  mutate(percent = n/sum(n)) %>%
+  ungroup()
+```
+
+```{r}
+patients_by_cancer_tRNA_hc$group <- factor(patients_by_cancer_tRNA_hc$group, c("No Homozygous Deletion", "No Homozygous tRNA Deletion", "Homozygous tRNA Deletion"))
+
+ggplot(patients_by_cancer_tRNA_hc, aes(x = acronym, y = percent, fill = group)) +
+  geom_col() +
+  scale_fill_manual(values = c("No Homozygous Deletion" = "#eeeeee", "No Homozygous tRNA Deletion" = "#bbbbbb", "Homozygous tRNA Deletion" = "#f46d43")) +
+  labs(x = NULL, y = "Proportion of Samples", fill = "Group") +
+  theme_bw() +
+  theme(axis.text.x=element_text(size=17, angle = 45, hjust = 1, color = "black"),
+        axis.title.x = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        axis.title.y = element_text(size = 17),
+        legend.title = element_text(size = 16),
+        legend.text = element_text(size = 14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+```
+
+```{r}
+ggsave("figures/hc_tRNAs/patients_by_cancer_tRNA_landscape_hc-tRNAs.pdf", height = 10, width = 20)
+```
+
+### Figure 1b: Most prevalent isoacceptor family in the deletions
+
+```{r}
+deleted_hc_tRNAs$anticodon <- sub("^[^-]+-([^-]+-[^-]+)-.*", "\\1", deleted_hc_tRNAs$V8)
+#for getting only anticodon, not aa-label: ^[^-]+-[^-]+-([^-]+)-.*
+
+#make a df with only deletion_id, patient_id and anticodon.
+anticodons_hc_tRNAs <- deleted_hc_tRNAs %>%
+  select(V4, patient_id, anticodon)
+colnames(anticodons_hc_tRNAs) <- c("deletion_id", "bcr_patient_barcode", "anticodon")
+
+#join the acronyms into the df. Multiple matches for each patient_id will be detected, but as I understood the default is to keep all
+anticodons_hc_tRNAs <- anticodons_hc_tRNAs %>%
+  left_join(clinical_data %>% select(bcr_patient_barcode, acronym), by = "bcr_patient_barcode") %>%
+  filter(!str_detect(anticodon, "NNN") & !str_detect(anticodon, "Und"))
+```
+
+```{r}
+highest_tRNA_overall_hc <- anticodons_hc_tRNAs %>%
+  count(anticodon) %>%
+  arrange(desc(n)) %>%
+  slice_head(n=5) %>%
+  mutate(relative = n/length(unique(deleted_hc_tRNAs$V4)))
+
+
+ggplot(highest_tRNA_overall_hc, aes(x = reorder(anticodon, -relative), y = relative)) +
+  geom_col(fill="#f46d43") + 
+  labs(x = "Isodecoder", y = "Relative Frequency of tRNA Deletions") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=17, angle = 45, hjust = 1, color = "black"),
+        axis.title.y = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) 
+ggsave("figures/hc_tRNAs/most_del_isoacceptor_per_del_hc-tRNAs.pdf", width = 6, height = 5.5)
+```
+
+### Figure 1c: Most deleted isoacceptor family by patients
+
+```{r}
+highest_tRNA_patient_hc <- anticodons_hc_tRNAs %>%
+  distinct(bcr_patient_barcode, anticodon) %>%
+  count(anticodon) %>%
+  arrange(desc(n)) %>%
+  slice_head(n=5) %>%
+  mutate(relative = n/length(unique(deleted_hc_tRNAs$patient_id)))
+
+
+ggplot(highest_tRNA_patient_hc, aes(x = reorder(anticodon, -relative), y = relative)) +
+  geom_col(fill="#f46d43") + 
+  labs(x = "Isodecoder", y = "Relative Frequency of Deletion in Tumours") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=17, angle = 45, hjust = 1, color = "black"),
+        axis.title.y = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) 
+ggsave("figures/hc_tRNAs/most_del_isodecoder_all_cancers_hc-tRNAs.pdf", width = 6, height = 5.5)
+```
+
+### Figure 1d: Length of deletions with and without tRNAs
+
+```{r}
+deletions_homozygous$Length <- deletions_homozygous$End - deletions_homozygous$Start
+
+deletions_homozygous$tRNA_hc <- deletions_homozygous$deletion_id %in% deleted_hc_tRNAs$V4
+
+plot_deletion_length_hc <- deletions_homozygous %>%
+  select(tRNA_hc, Length) %>%
+  mutate(groups_hc = if_else(tRNA_hc, "tRNA deletion", "no tRNA deletion"))
+
+ggplot(plot_deletion_length_hc, aes(x = groups_hc, y = Length, color = groups_hc, fill = groups_hc)) +
+  geom_boxplot(size = 1) +
+  scale_y_log10() +
+  labs(x = NULL, y = "Length of Deletions") +
+  scale_color_manual(values= c( "#bbbbbb", "#f46d43")) +
+  scale_fill_manual(values= c( "#eeeeee", "#ffddd0")) +
+  coord_cartesian(ylim = c(1e+3, 1e+9)) +
+  stat_compare_means(comparisons = list(c("tRNA deletion", "no tRNA deletion")), 
+                     method = "wilcox.test", 
+                     method.args = list(alternative = "two.sided"),
+                     size = 6) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=18, color = "black"),
+        axis.title = element_text(size = 18),
+        axis.text.y=element_text(size=18, color = "black"),
+        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) 
+ggsave("figures/hc_tRNAs/deletion_lengths_hc-tRNAs.pdf", width = 6, height = 5.5)
+```
+
+### Figure 1g: Number of deletions per patients with/without tRNA deletion
+
+```{r}
+deletions_per_patient_hc <- deletions_homozygous %>%
+  count(patient_id, name = "deletions")
+
+deletions_per_patient_tRNA_hc <- deletions_per_patient_hc %>%
+  filter(patient_id %in% deleted_hc_tRNAs$patient_id)
+deletions_per_patient_tRNA_hc$group <- "tRNA deletion"
+
+deletions_per_patient_no_tRNA_hc <- deletions_per_patient_hc %>%
+  filter(!(patient_id %in% deleted_hc_tRNAs$patient_id))
+deletions_per_patient_no_tRNA_hc$group <- "no tRNA deletion"
+
+deletions_per_patient_hc <- rbind(
+  deletions_per_patient_tRNA_hc[, c("deletions", "group")],
+  deletions_per_patient_no_tRNA_hc[, c("deletions", "group")]
+)
+```
+
+```{r}
+ggplot(deletions_per_patient_hc, aes(x = group, y = deletions, color = group, fill = group)) +
+  geom_boxplot(size = 1) +
+  scale_y_log10() +
+  labs(x = NULL, y = "Number of Deletions per Tumour") +
+  scale_color_manual(values= c( "#bbbbbb", "#f46d43")) +
+  scale_fill_manual(values= c( "#eeeeee", "#ffddd0")) +
+  coord_cartesian(ylim = c(1, 500)) +
+  stat_compare_means(comparisons = list(c("tRNA deletion", "no tRNA deletion")), 
+                     method = "wilcox.test", 
+                     method.args = list(alternative = "two.sided"),
+                     size = 6) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=18, color = "black"),
+        axis.title = element_text(size = 18),
+        axis.text.y=element_text(size=18, color = "black"),
+        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) 
+ggsave("figures/hc_tRNAs/number_deletions_per_patient_hc-tRNAs.pdf", width = 6, height = 5.5)
+```
+
+### Figure 1e: Overlap of tRNA gene deletions with tumour suppressors
+
+run bedtools on all homozygous deletions and tumour suppressor bed-files (got bed-files from genome browser, hg19)
+
+```{bash}
+bedtools intersect -F 1 -wo -a data/hg19-tRNAs/homozygous_deletions.bed -b tumorsuppressors/tumour_suppressors_candidate.bed > deletions_candidate_ts.bed
+
+bedtools intersect -F 1 -wo -a data/hg19-tRNAs/homozygous_deletions.bed -b tumorsuppressors/tumour_suppressors_known.bed > deletions_known_ts.bed
+```
+
+now I can just see which deletion IDs show up in both this and the deleted tRNAs! no need to run another intersect between tRNA and tumour suppressor deletions.
+
+```{r}
+deletions_candidate_ts <- read.csv("deletions_candidate_ts.bed", header = FALSE, sep = "\t")
+
+deletions_known_ts <- read.csv("deletions_known_ts.bed", header = FALSE, sep = "\t")
+```
+
+```{r}
+deletions_no_tRNA_hc <- deletions_homozygous %>%
+  filter(!(deletion_id %in% deleted_hc_tRNAs$V4)) %>%
+  distinct(deletion_id)
+
+no_overlap_hc_tRNA_ts <- deleted_hc_tRNAs %>%
+  filter(!(V4 %in% deletions_candidate_ts$V4) &
+           !(V4 %in% deletions_known_ts$V4)) %>%
+  distinct(V4)
+
+overlap_hc_tRNA_candidate_ts <- deleted_hc_tRNAs %>%
+  filter(V4 %in% deletions_candidate_ts$V4) %>%
+  distinct(V4)
+
+overlap_hc_tRNA_known_ts <- deleted_hc_tRNAs %>%
+  filter(V4 %in% deletions_known_ts$V4) %>%
+  distinct(V4)
+
+no_overlap_no_tRNA_ts <- deletions_no_tRNA_hc %>%
+  filter(!(deletion_id %in% deletions_candidate_ts$V4) &
+           !(deletion_id %in% deletions_known_ts$V4)) %>%
+  distinct(deletion_id)
+
+overlap_no_tRNA_candidate_ts <- deletions_no_tRNA_hc %>%
+  filter(deletion_id %in% deletions_candidate_ts$V4) %>%
+  distinct(deletion_id)
+
+overlap_no_tRNA_known_ts <- deletions_no_tRNA_hc %>%
+  filter(deletion_id %in% deletions_known_ts$V4) %>%
+  distinct(deletion_id)
+
+plot_deletions_ts_hc <- data.frame(group = rep(c("No Overlap",
+                                       "Candidate Tumour Suppressors" , 
+                                       "Known Tumour Suppressors"), times = 2),
+                            set = rep(c("deletions with tRNA",
+                                       "deletions without tRNA"), 
+                                      each = 3),
+                            n = c(dim(no_overlap_hc_tRNA_ts)[1],
+                                  dim(overlap_hc_tRNA_candidate_ts)[1],
+                                  dim(overlap_hc_tRNA_known_ts)[1],
+                                  dim(no_overlap_no_tRNA_ts)[1],
+                                  dim(overlap_no_tRNA_candidate_ts)[1],
+                                  dim(overlap_no_tRNA_known_ts)[1]
+                                  ),
+                            total = rep(c(dim(deleted_hc_tRNAs %>% distinct(V4))[1],
+                                        dim(deletions_no_tRNA_hc)[1]),
+                                        each = 3)) %>%
+  mutate(relative = n/total)
+```
+
+```{r}
+plot_deletions_ts_hc$set <- factor(plot_deletions_ts_hc$set, levels = c("deletions without tRNA", "deletions with tRNA"))
+
+plot_deletions_ts_hc$group <- factor(plot_deletions_ts_hc$group, levels = c("No Overlap", "Candidate Tumour Suppressors", "Known Tumour Suppressors"))
+
+labels_TS <- c("No Overlap", "Candidate Tumour\n Suppressors", "Known Tumour\n Suppressors")
+
+
+ggplot(plot_deletions_ts_hc, aes(x = group, y = relative, fill = set)) +
+  geom_col(position = position_dodge(width = 0.95), width = 0.9, size = 0.7) +
+  scale_fill_manual(values= c( "#bbbbbb", "#f46d43")) +
+  labs(y = "Relative Frequency") +
+  theme_bw() +
+  scale_x_discrete(labels = labels_TS) +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=17, color = "black"),
+        axis.title = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) 
+ggsave("figures/hc_tRNAs/deletions_tRNA_TS.pdf", width = 7, height = 5)
+```
+
+### Figure 1f: Overlap of tRNA gene deletions with fragile sites
+
+```{bash}
+bedtools intersect -F 1 -wo -a data/hg19-tRNAs/homozygous_deletions.bed -b tumorsuppressors/known_fragile_sites_coord.bed > deletions_fragile_sites.bed
+```
+
+```{r}
+deletions_fragile_sites <- read.csv("deletions_fragile_sites.bed", header = FALSE, sep = "\t")
+```
+
+```{r}
+overlap_hc_tRNA_fragile_sites <- deleted_hc_tRNAs %>%
+  filter(V4 %in% deletions_fragile_sites$V4) %>%
+  distinct(V4)
+
+no_overlap_hc_tRNA_fragile_sites <- deleted_hc_tRNAs %>%
+  filter(!(V4 %in% deletions_fragile_sites$V4)) %>%
+  distinct(V4)
+
+overlap_no_tRNA_fragile_sites <- deletions_no_tRNA_hc %>%
+  filter(deletion_id %in% deletions_fragile_sites$V4) %>%
+  distinct(deletion_id)
+
+no_overlap_no_tRNA_fragile_sites <- deletions_no_tRNA_hc %>%
+  filter(!(deletion_id %in% deletions_fragile_sites$V4)) %>%
+  distinct(deletion_id)
+
+plot_deletions_fragile_sites_hc <- data.frame(group = rep(c("No Overlap",
+                                       "Overlap with fragile site"), times = 2),
+                            set = rep(c("deletions with tRNA",
+                                       "deletions without tRNA"), 
+                                      each = 2),
+                            n = c(dim(no_overlap_hc_tRNA_fragile_sites)[1],
+                                  dim(overlap_hc_tRNA_fragile_sites)[1],
+                                  dim(no_overlap_no_tRNA_fragile_sites)[1],
+                                  dim(overlap_no_tRNA_fragile_sites)[1]
+                                  ),
+                            total = rep(c(dim(deleted_hc_tRNAs %>% distinct(V4))[1],
+                                        dim(deletions_no_tRNA_hc)[1]),
+                                        each = 2)) %>%
+  mutate(relative = n/total)
+```
+
+```{r}
+plot_deletions_fragile_sites_hc$set <- factor(plot_deletions_fragile_sites_hc$set, levels = c("deletions without tRNA", "deletions with tRNA"))
+
+labels_FS <- c("No Overlap", "Overlap\n Fragile Site")
+
+
+ggplot(plot_deletions_fragile_sites_hc, aes(x = group, y = relative, fill = set)) + 
+  geom_col(position = position_dodge(width = 0.95), width = 0.9, size = 0.7) +
+  scale_fill_manual(values= c( "#bbbbbb", "#f46d43")) +
+  labs(y = "Relative frequency") +
+  scale_x_discrete(labels = labels_FS) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=17, color = "black"),
+        axis.title.y = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) 
+ggsave("figures/hc_tRNAs/deletions_tRNA_fragile_sites.pdf", width = 7, height = 5)
+```
+
+## Deletion of tRNAs in cancer: using all annotated tRNAs
+
+Data loaded in previous part is used: deletions_homozygous, clinical_data
+
+```{bash}
+bedtools intersect -F 1 -wo -a data/hg19-tRNAs/homozygous_deletions.bed -b data/hg19-tRNAs/hg19-tRNAs.bed > deletions_all_tRNA.bed
+```
+
+### Figure 5a: Prevalence of tRNA genes in human cancer samples
+
+```{r}
+#read in all deletions that contain tRNA genes
+deleted_all_tRNAs <- read.csv("deletions_all_tRNA.bed", sep = "\t", header = FALSE)
+#get the patient ID
+deleted_all_tRNAs$patient_id <- substr(deleted_all_tRNAs$V4, 1, 12)
+
+#seperate patients by whether they have homozygous deletions, homoz. del. of tRNAs
+patients_by_cancer_no_homozygous <- clinical_data %>%
+  filter(!(bcr_patient_barcode %in% deletions_homozygous$patient_id)) %>%
+  count(acronym, name = "no_homozygous")
+
+patients_by_cancer_tRNA_all <- clinical_data %>%
+  filter(bcr_patient_barcode %in% deleted_all_tRNAs$patient_id) %>%
+  count(acronym, name = "homozygous_tRNA")
+
+patients_by_cancer_tRNA_all_wo<- clinical_data %>%
+  filter(!(bcr_patient_barcode %in% deleted_all_tRNAs$patient_id)) %>%
+  count(acronym, name = "homozygous_no_tRNA")
+
+patients_by_cancer_tRNA_all <- patients_by_cancer_tRNA_all %>%
+  full_join(patients_by_cancer_tRNA_all_wo, by = "acronym") %>%
+  full_join(patients_by_cancer_no_homozygous, by = "acronym") %>%
+  replace_na(list(acronym = NA, homozygous_tRNA = 0, homozygous_no_tRNA = 0))
+
+colnames(patients_by_cancer_tRNA_all) <- c("acronym", "Homozygous tRNA Deletion", "No Homozygous tRNA Deletion", "No Homozygous Deletion")
+```
+
+```{r}
+#pivot df to plot
+patients_by_cancer_tRNA_all <- patients_by_cancer_tRNA_all %>%
+  pivot_longer(cols = contains("Homozygous"),
+               names_to = "group",
+               values_to = "n") %>%
+  group_by(acronym) %>%
+  mutate(percent = n/sum(n)) %>%
+  ungroup()
+```
+
+```{r}
+patients_by_cancer_tRNA_all$group <- factor(patients_by_cancer_tRNA_all$group, c("No Homozygous Deletion", "No Homozygous tRNA Deletion", "Homozygous tRNA Deletion"))
+
+ggplot(patients_by_cancer_tRNA_all, aes(x = acronym, y = percent, fill = group)) +
+  geom_col() +
+  scale_fill_manual(values = c("No Homozygous Deletion" = "#eeeeee", "No Homozygous tRNA Deletion" = "#bbbbbb", "Homozygous tRNA Deletion" = "#f46d43")) +
+  labs(x = NULL, y = "Proportion of Samples", fill = "Group") +
+  theme_bw() +
+  theme(axis.text.x=element_text(size=17, angle = 45, hjust = 1, color = "black"),
+        axis.title.x = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        axis.title.y = element_text(size = 17),
+        legend.title = element_text(size = 16),
+        legend.text = element_text(size = 14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+```
+
+```{r}
+ggsave("figures/all_tRNAs/patients_by_cancer_tRNA_landscape_all-tRNAs.pdf", height = 10, width = 20)
+```
+
+### Figure 5b: Most prevalent isoacceptor family in the deletions
+
+```{r}
+deleted_all_tRNAs$anticodon <- sub("^[^-]+-([^-]+-[^-]+)-.*", "\\1", deleted_all_tRNAs$V8)
+#for getting only anticodon, not aa-label: ^[^-]+-[^-]+-([^-]+)-.*
+
+#make a df with only deletion_id, patient_id and anticodon.
+anticodons_all_tRNAs <- deleted_all_tRNAs %>%
+  select(V4, patient_id, anticodon)
+colnames(anticodons_all_tRNAs) <- c("deletion_id", "bcr_patient_barcode", "anticodon")
+
+#join the acronyms into the df. Multiple matches for each patient_id will be detected, but as I understood the default is to keep all
+anticodons_all_tRNAs <- anticodons_all_tRNAs %>%
+  left_join(clinical_data %>% select(bcr_patient_barcode, acronym), by = "bcr_patient_barcode") %>%
+  filter(!str_detect(anticodon, "NNN") & !str_detect(anticodon, "Und"))
+```
+
+```{r}
+highest_tRNA_overall_all <- anticodons_all_tRNAs %>%
+  count(anticodon) %>%
+  arrange(desc(n)) %>%
+  slice_head(n=5) %>%
+  mutate(relative = n/length(unique(deleted_all_tRNAs$V4)))
+
+
+ggplot(highest_tRNA_overall_all, aes(x = reorder(anticodon, -relative), y = relative)) +
+  geom_col(fill="#f46d43") + 
+  labs(x = "Isodecoder", y = "Relative Frequency of tRNA Deletions") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=17, angle = 45, hjust = 1, color = "black"),
+        axis.title.y = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) 
+ggsave("figures/all_tRNAs/most_del_isoacceptor_per_del_all-tRNAs.pdf", width = 6, height = 5.5)
+```
+
+### Figure 5c: Most deleted isoacceptor family by patients
+
+```{r}
+highest_tRNA_patient_all <- anticodons_all_tRNAs %>%
+  distinct(bcr_patient_barcode, anticodon) %>%
+  count(anticodon) %>%
+  arrange(desc(n)) %>%
+  slice_head(n=5) %>%
+  mutate(relative = n/length(unique(deleted_all_tRNAs$patient_id)))
+
+
+ggplot(highest_tRNA_patient_all, aes(x = reorder(anticodon, -relative), y = relative)) +
+  geom_col(fill="#f46d43") + 
+  labs(x = "Isodecoder", y = "Relative Frequency of Deletion in Tumours") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=17, angle = 45, hjust = 1, color = "black"),
+        axis.title.y = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) 
+ggsave("figures/all_tRNAs/most_del_isodecoder_all_cancers_all-tRNAs.pdf", width = 6, height = 5.5)
+```
+
+### Figure 5d: Length of deletions with and without tRNAs
+
+```{r}
+deletions_homozygous$Length <- deletions_homozygous$End - deletions_homozygous$Start
+
+deletions_homozygous$tRNA_all <- deletions_homozygous$deletion_id %in% deleted_all_tRNAs$V4
+
+plot_deletion_length_all <- deletions_homozygous %>%
+  select(tRNA_all, Length) %>%
+  mutate(groups_all = if_else(tRNA_all, "tRNA deletion", "no tRNA deletion"))
+
+ggplot(plot_deletion_length_all, aes(x = groups_all, y = Length, color = groups_all, fill = groups_all)) +
+  geom_boxplot(size = 1) +
+  scale_y_log10() +
+  labs(x = NULL, y = "Length of Deletions") +
+  scale_color_manual(values= c( "#bbbbbb", "#f46d43")) +
+  scale_fill_manual(values= c( "#eeeeee", "#ffddd0")) +
+  coord_cartesian(ylim = c(1e+3, 1e+9)) +
+  stat_compare_means(comparisons = list(c("tRNA deletion", "no tRNA deletion")), 
+                     method = "wilcox.test", 
+                     method.args = list(alternative = "two.sided"),
+                     size = 6) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=18, color = "black"),
+        axis.title = element_text(size = 18),
+        axis.text.y=element_text(size=18, color = "black"),
+        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) 
+ggsave("figures/all_tRNAs/deletion_lengths_all-tRNAs.pdf", width = 6, height = 5.5)
+```
+
+### Figure 5g: Number of deletions per patients with/without tRNA deletion
+
+```{r}
+deletions_per_patient_all <- deletions_homozygous %>%
+  count(patient_id, name = "deletions")
+
+deletions_per_patient_tRNA_all <- deletions_per_patient_all %>%
+  filter(patient_id %in% deleted_all_tRNAs$patient_id)
+deletions_per_patient_tRNA_all$group <- "tRNA deletion"
+
+deletions_per_patient_no_tRNA_all <- deletions_per_patient_all %>%
+  filter(!(patient_id %in% deleted_all_tRNAs$patient_id))
+deletions_per_patient_no_tRNA_all$group <- "no tRNA deletion"
+
+deletions_per_patient_all <- rbind(
+  deletions_per_patient_tRNA_all[, c("deletions", "group")],
+  deletions_per_patient_no_tRNA_all[, c("deletions", "group")]
+)
+```
+
+```{r}
+ggplot(deletions_per_patient_all, aes(x = group, y = deletions, color = group, fill = group)) +
+  geom_boxplot(size = 1) +
+  scale_y_log10() +
+  labs(x = NULL, y = "Number of Deletions per Tumour") +
+  scale_color_manual(values= c( "#bbbbbb", "#f46d43")) +
+  scale_fill_manual(values= c( "#eeeeee", "#ffddd0")) +
+  coord_cartesian(ylim = c(1, 500)) +
+  stat_compare_means(comparisons = list(c("tRNA deletion", "no tRNA deletion")), 
+                     method = "wilcox.test", 
+                     method.args = list(alternative = "two.sided"),
+                     size = 6) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=18, color = "black"),
+        axis.title = element_text(size = 18),
+        axis.text.y=element_text(size=18, color = "black"),
+        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) 
+ggsave("figures/all_tRNAs/number_deletions_per_patient_all-tRNAs.pdf", width = 6, height = 5.5)
+```
+
+### Figure 5e: Overlap of tRNA gene deletions with tumour suppressors
+
+run bedtools on all homozygous deletions and tumour suppressor bed-files (got bed-files from genome browser, hg19)
+
+```{bash}
+bedtools intersect -F 1 -wo -a data/hg19-tRNAs/homozygous_deletions.bed -b tumorsuppressors/tumour_suppressors_candidate.bed > deletions_candidate_ts.bed
+
+bedtools intersect -F 1 -wo -a data/hg19-tRNAs/homozygous_deletions.bed -b tumorsuppressors/tumour_suppressors_known.bed > deletions_known_ts.bed
+```
+
+now I can just see which deletion IDs show up in both this and the deleted tRNAs! no need to run another intersect between tRNA and tumour suppressor deletions.
+
+```{r}
+deletions_candidate_ts <- read.csv("deletions_candidate_ts.bed", header = FALSE, sep = "\t")
+
+deletions_known_ts <- read.csv("deletions_known_ts.bed", header = FALSE, sep = "\t")
+```
+
+```{r}
+deletions_no_tRNA_all <- deletions_homozygous %>%
+  filter(!(deletion_id %in% deleted_all_tRNAs$V4)) %>%
+  distinct(deletion_id)
+
+no_overlap_all_tRNA_ts <- deleted_all_tRNAs %>%
+  filter(!(V4 %in% deletions_candidate_ts$V4) &
+           !(V4 %in% deletions_known_ts$V4)) %>%
+  distinct(V4)
+
+overlap_all_tRNA_candidate_ts <- deleted_all_tRNAs %>%
+  filter(V4 %in% deletions_candidate_ts$V4) %>%
+  distinct(V4)
+
+overlap_all_tRNA_known_ts <- deleted_all_tRNAs %>%
+  filter(V4 %in% deletions_known_ts$V4) %>%
+  distinct(V4)
+
+no_overlap_no_tRNA_ts <- deletions_no_tRNA_all %>%
+  filter(!(deletion_id %in% deletions_candidate_ts$V4) &
+           !(deletion_id %in% deletions_known_ts$V4)) %>%
+  distinct(deletion_id)
+
+overlap_no_tRNA_candidate_ts <- deletions_no_tRNA_all %>%
+  filter(deletion_id %in% deletions_candidate_ts$V4) %>%
+  distinct(deletion_id)
+
+overlap_no_tRNA_known_ts <- deletions_no_tRNA_all %>%
+  filter(deletion_id %in% deletions_known_ts$V4) %>%
+  distinct(deletion_id)
+
+plot_deletions_ts_all <- data.frame(group = rep(c("No Overlap",
+                                       "Candidate Tumour Suppressors" , 
+                                       "Known Tumour Suppressors"), times = 2),
+                            set = rep(c("deletions with tRNA",
+                                       "deletions without tRNA"), 
+                                      each = 3),
+                            n = c(dim(no_overlap_all_tRNA_ts)[1],
+                                  dim(overlap_all_tRNA_candidate_ts)[1],
+                                  dim(overlap_all_tRNA_known_ts)[1],
+                                  dim(no_overlap_no_tRNA_ts)[1],
+                                  dim(overlap_no_tRNA_candidate_ts)[1],
+                                  dim(overlap_no_tRNA_known_ts)[1]
+                                  ),
+                            total = rep(c(dim(deleted_all_tRNAs %>% distinct(V4))[1],
+                                        dim(deletions_no_tRNA_all)[1]),
+                                        each = 3)) %>%
+  mutate(relative = n/total)
+```
+
+```{r}
+plot_deletions_ts_all$set <- factor(plot_deletions_ts_all$set, levels = c("deletions without tRNA", "deletions with tRNA"))
+
+plot_deletions_ts_all$group <- factor(plot_deletions_ts_all$group, levels = c("No Overlap", "Candidate Tumour Suppressors", "Known Tumour Suppressors"))
+
+labels_TS <- c("No Overlap", "Candidate Tumour\n Suppressors", "Known Tumour\n Suppressors")
+
+
+ggplot(plot_deletions_ts_all, aes(x = group, y = relative, fill = set)) +
+  geom_col(position = position_dodge(width = 0.95), width = 0.9, size = 0.7) +
+  scale_fill_manual(values= c( "#bbbbbb", "#f46d43")) +
+  labs(y = "Relative Frequency") +
+  theme_bw() +
+  scale_x_discrete(labels = labels_TS) +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=17, color = "black"),
+        axis.title = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) 
+ggsave("figures/all_tRNAs/deletions_tRNA_TS_all.pdf", width = 7, height = 5)
+```
+
+### Figure 5f: Overlap of tRNA gene deletions with fragile sites
+
+```{bash}
+bedtools intersect -F 1 -wo -a data/hg19-tRNAs/homozygous_deletions.bed -b tumorsuppressors/known_fragile_sites_coord.bed > deletions_fragile_sites.bed
+```
+
+```{r}
+deletions_fragile_sites <- read.csv("deletions_fragile_sites.bed", header = FALSE, sep = "\t")
+```
+
+```{r}
+overlap_all_tRNA_fragile_sites <- deleted_all_tRNAs %>%
+  filter(V4 %in% deletions_fragile_sites$V4) %>%
+  distinct(V4)
+
+no_overlap_all_tRNA_fragile_sites <- deleted_all_tRNAs %>%
+  filter(!(V4 %in% deletions_fragile_sites$V4)) %>%
+  distinct(V4)
+
+overlap_no_tRNA_fragile_sites <- deletions_no_tRNA_all %>%
+  filter(deletion_id %in% deletions_fragile_sites$V4) %>%
+  distinct(deletion_id)
+
+no_overlap_no_tRNA_fragile_sites <- deletions_no_tRNA_all %>%
+  filter(!(deletion_id %in% deletions_fragile_sites$V4)) %>%
+  distinct(deletion_id)
+
+plot_deletions_fragile_sites_all <- data.frame(group = rep(c("No Overlap",
+                                       "Overlap with fragile site"), times = 2),
+                            set = rep(c("deletions with tRNA",
+                                       "deletions without tRNA"), 
+                                      each = 2),
+                            n = c(dim(no_overlap_all_tRNA_fragile_sites)[1],
+                                  dim(overlap_all_tRNA_fragile_sites)[1],
+                                  dim(no_overlap_no_tRNA_fragile_sites)[1],
+                                  dim(overlap_no_tRNA_fragile_sites)[1]
+                                  ),
+                            total = rep(c(dim(deleted_all_tRNAs %>% distinct(V4))[1],
+                                        dim(deletions_no_tRNA_all)[1]),
+                                        each = 2)) %>%
+  mutate(relative = n/total)
+```
+
+```{r}
+plot_deletions_fragile_sites_all$set <- factor(plot_deletions_fragile_sites_all$set, levels = c("deletions without tRNA", "deletions with tRNA"))
+
+labels_FS <- c("No Overlap", "Overlap\n Fragile Site")
+
+
+ggplot(plot_deletions_fragile_sites_all, aes(x = group, y = relative, fill = set)) + 
+  geom_col(position = position_dodge(width = 0.95), width = 0.9, size = 0.7) +
+  scale_fill_manual(values= c( "#bbbbbb", "#f46d43")) +
+  labs(y = "Relative frequency") +
+  scale_x_discrete(labels = labels_FS) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=17, color = "black"),
+        axis.title.y = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) 
+ggsave("figures/all_tRNAs/deletions_tRNA_fragile_sites_all.pdf", width = 7, height = 5)
+```
+
+```{r}
+sessionInfo()
+```

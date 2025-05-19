@@ -1,0 +1,50 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+This document: Figure 4b: qPCR results for quantifying plasmid number in MCF7
+
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+
+### Figure 4b: qPCR-results
+
+```{r}
+qPCR <- read.csv("qPCR_0424_0431_another.csv", sep = ",")
+qPCR <- qPCR %>%
+  group_by(X) %>%
+  mutate(mean = sum(d3)/2) %>%
+  ungroup()
+
+qPCR_values <- qPCR %>%
+  group_by(X) %>%
+  slice(1) %>%
+  ungroup()
+```
+
+```{r}
+ggplot() +
+  geom_col(data = qPCR_values, aes(x = X, y = mean), fill = "#f46d43") +
+  geom_point(data = qPCR, aes(x = X, y = d3, shape = batch), size = 3)+
+  theme_bw() +
+  labs(y = "Relative Copy Number of tRNA Gene") +
+  theme(axis.title.x = element_blank(),
+        axis.text.x=element_text(size=17, angle = 45, hjust = 1, color = "black"),
+        axis.title.y = element_text(size = 17),
+        axis.text.y=element_text(size=17, color = "black"),
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+```
+
+```{r}
+ggsave("qPCR_biol-repl_0324_0331.pdf", height = 7, width = 9)
+```
+
+```{r}
+sessionInfo()
+```

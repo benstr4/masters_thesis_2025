@@ -118,7 +118,7 @@ Attaching package: 'dplyr'</code></pre>
 <section id="figure-4b-qpcr-results" class="level3">
 <h3 class="anchored" data-anchor-id="figure-4b-qpcr-results">Figure 4b: qPCR-results</h3>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>qPCR <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"qPCR_0424_0431_another.csv"</span>, <span class="at">sep =</span> <span class="st">","</span>)</span>
+<div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>qPCR <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"qPCR_0324_0331_another.csv"</span>, <span class="at">sep =</span> <span class="st">","</span>)</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>qPCR <span class="ot">&lt;-</span> qPCR <span class="sc">%&gt;%</span></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(X) <span class="sc">%&gt;%</span></span>
 <span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">mean =</span> <span class="fu">sum</span>(d3)<span class="sc">/</span><span class="dv">2</span>) <span class="sc">%&gt;%</span></span>

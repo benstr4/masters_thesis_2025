@@ -14,7 +14,7 @@ library(dplyr)
 ### Figure 4b: qPCR-results
 
 ```{r}
-qPCR <- read.csv("qPCR_0424_0431_another.csv", sep = ",")
+qPCR <- read.csv("qPCR_0324_0331_another.csv", sep = ",")
 qPCR <- qPCR %>%
   group_by(X) %>%
   mutate(mean = sum(d3)/2) %>%

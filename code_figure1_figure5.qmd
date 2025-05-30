@@ -217,7 +217,8 @@ plot_deletion_length_hc <- deletions_homozygous %>%
   mutate(groups_hc = if_else(tRNA_hc, "tRNA deletion", "no tRNA deletion"))
 
 ggplot(plot_deletion_length_hc, aes(x = groups_hc, y = Length, color = groups_hc, fill = groups_hc)) +
-  geom_boxplot(size = 1) +
+  geom_violin(size = 1) +
+  geom_boxplot(width=.1) +
   scale_y_log10() +
   labs(x = NULL, y = "Length of Deletions") +
   scale_color_manual(values= c( "#bbbbbb", "#f46d43")) +
@@ -235,7 +236,7 @@ ggplot(plot_deletion_length_hc, aes(x = groups_hc, y = Length, color = groups_hc
         legend.position = "none",
         panel.grid.minor = element_blank(),
         panel.grid.major = element_blank()) 
-ggsave("figures/hc_tRNAs/deletion_lengths_hc-tRNAs.pdf", width = 6, height = 5.5)
+ggsave("figures/hc_tRNAs/deletion_lengths_hc-tRNAs.pdf", width = 6, height = 5)
 ```
 
 ### Figure 1g: Number of deletions per patients with/without tRNA deletion
@@ -584,7 +585,8 @@ plot_deletion_length_all <- deletions_homozygous %>%
   mutate(groups_all = if_else(tRNA_all, "tRNA deletion", "no tRNA deletion"))
 
 ggplot(plot_deletion_length_all, aes(x = groups_all, y = Length, color = groups_all, fill = groups_all)) +
-  geom_boxplot(size = 1) +
+  geom_violin(linewidth = 1) +
+  geom_boxplot(width = .1) +
   scale_y_log10() +
   labs(x = NULL, y = "Length of Deletions") +
   scale_color_manual(values= c( "#bbbbbb", "#f46d43")) +
@@ -602,7 +604,7 @@ ggplot(plot_deletion_length_all, aes(x = groups_all, y = Length, color = groups_
         legend.position = "none",
         panel.grid.minor = element_blank(),
         panel.grid.major = element_blank()) 
-ggsave("figures/all_tRNAs/deletion_lengths_all-tRNAs.pdf", width = 6, height = 5.5)
+ggsave("figures/all_tRNAs/deletion_lengths_all-tRNAs.pdf", width = 6, height = 5)
 ```
 
 ### Figure 5g: Number of deletions per patients with/without tRNA deletion
